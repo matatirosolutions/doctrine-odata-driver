@@ -8,9 +8,8 @@ use Doctrine\DBAL\Driver\Statement as StatementInterface;
 use Doctrine\DBAL\ParameterType;
 use Matatirosoln\DoctrineOdataDriver\Exception\ODataDriverException;
 use Matatirosoln\DoctrineOdataDriver\Http\ODataClient;
+use Matatirosoln\SqlToOdata\Exception\ConversionException;
 use Matatirosoln\SqlToOdata\SqlToOdata;
-use PhpMyAdmin\SqlParser\Parser;
-use PhpMyAdmin\SqlParser\Statements\SelectStatement;
 
 class ODataStatement implements StatementInterface
 {
@@ -32,32 +31,15 @@ class ODataStatement implements StatementInterface
     {
         $sql = $this->substituteParams($this->sql);
 
-        $parser    = new Parser($sql);
-        $statement = $parser->statements[0] ?? null;
-
-        if (!$statement instanceof SelectStatement) {
-            throw new ODataDriverException('Only SELECT statements are supported at this time.');
+        try {
+            $parsed = (new SqlToOdata())->parse($sql);
+        } catch (ConversionException $e) {
+            throw new ODataDriverException($e->getMessage(), 0, $e);
         }
 
-        $entitySet = $this->extractEntitySet($statement);
-        $converter = new SqlToOdata();
-        $queryString = $converter->convert($sql);
-
-        $data = $this->client->get($entitySet, $queryString);
+        $data = $this->client->get($parsed->entitySet, $parsed->queryString);
 
         return new ODataResult($data);
-    }
-
-    private function extractEntitySet(SelectStatement $statement): string
-    {
-        $table = $statement->from[0]->table ?? null;
-
-        if ($table === null || $table === '') {
-            throw new ODataDriverException('Could not determine table name from SQL.');
-        }
-
-        // Strip ANSI/MySQL quoting that the ORM may add
-        return trim($table, '`"\'');
     }
 
     private function substituteParams(string $sql): string
@@ -85,7 +67,6 @@ class ODataStatement implements StatementInterface
             ksort($positional);
             foreach ($positional as $binding) {
                 $formatted = $this->formatValue($binding['value'], $binding['type']);
-                // Replace only the first remaining `?`
                 $sql = preg_replace('/\?/', $formatted, $sql, 1);
             }
         }

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true">
+    <testsuites>
+        <testsuite name="Integration">
+            <directory>tests/Integration</directory>
+        </testsuite>
+    </testsuites>
+    <php>
+        <env name="ODATA_INTEGRATION" value="1"/>
+        <env name="ODATA_HOST"        value="your-filemaker-server.example.com"/>
+        <env name="ODATA_USER"        value="your-odata-username"/>
+        <env name="ODATA_PASSWORD"    value="your-odata-password"/>
+        <env name="ODATA_DBNAME"      value="YourDatabaseName"/>
+    </php>
+</phpunit>

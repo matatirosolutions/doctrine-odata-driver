@@ -18,8 +18,17 @@ class ODataResult implements ResultInterface
     /** @param array<string, mixed> $odataResponse */
     public function __construct(array $odataResponse)
     {
-        $this->rows = $odataResponse['value'] ?? [];
-        $this->columns = !empty($this->rows) ? array_keys($this->rows[0]) : [];
+        $this->rows = array_map(
+            static fn(array $row) => array_filter(
+                $row,
+                static fn(string $key) => !str_starts_with($key, '@'),
+                ARRAY_FILTER_USE_KEY,
+            ),
+            $odataResponse['value'] ?? [],
+        );
+
+        $first = reset($this->rows);
+        $this->columns = $first !== false ? array_keys($first) : [];
     }
 
     public function fetchNumeric(): array|false

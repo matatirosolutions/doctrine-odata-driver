@@ -3,13 +3,14 @@ declare(strict_types=1);
 
 namespace Matatirosoln\DoctrineOdataDriver\Http;
 
-use GuzzleHttp\Client;
-use GuzzleHttp\Exception\GuzzleException;
 use Matatirosoln\DoctrineOdataDriver\Exception\ODataDriverException;
+use Symfony\Component\HttpClient\HttpClient;
+use Symfony\Contracts\HttpClient\Exception\TransportExceptionInterface;
+use Symfony\Contracts\HttpClient\HttpClientInterface;
 
 class ODataClient
 {
-    private readonly Client $http;
+    private readonly HttpClientInterface $http;
     private readonly string $baseUrl;
 
     public function __construct(
@@ -24,9 +25,10 @@ class ODataClient
         $scheme = $ssl ? 'https' : 'http';
         $this->baseUrl = rtrim("{$scheme}://{$host}:{$port}{$urlPrefix}/{$dbname}", '/');
 
-        $this->http = new Client([
-            'timeout'  => 30,
-            'verify'   => $ssl,
+        $this->http = HttpClient::create([
+            'timeout'      => 30,
+            'verify_peer'  => $ssl,
+            'verify_host'  => $ssl,
         ]);
     }
 
@@ -44,15 +46,22 @@ class ODataClient
         }
 
         try {
-            $response = $this->http->get($url, [
-                'auth'    => [$this->user, $this->password],
-                'headers' => ['Accept' => 'application/json'],
+            $response = $this->http->request('GET', $url, [
+                'auth_basic' => [$this->user, $this->password],
+                'headers'    => ['Accept' => 'application/json'],
             ]);
-        } catch (GuzzleException $e) {
+
+            $body = $response->getContent();
+        } catch (TransportExceptionInterface $e) {
             throw new ODataDriverException("OData GET failed: {$e->getMessage()}", 0, $e);
+        } catch (\Symfony\Contracts\HttpClient\Exception\HttpExceptionInterface $e) {
+            throw new ODataDriverException(
+                "OData GET returned HTTP {$e->getResponse()->getStatusCode()}: {$e->getMessage()}",
+                $e->getResponse()->getStatusCode(),
+                $e,
+            );
         }
 
-        $body = (string) $response->getBody();
         $data = json_decode($body, true);
 
         if (!is_array($data)) {
