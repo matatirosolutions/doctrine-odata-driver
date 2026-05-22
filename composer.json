@@ -1,0 +1,40 @@
+{
+    "name": "matatirosoln/doctrine-odata-driver",
+    "description": "Doctrine DBAL driver for OData v4 backends, starting with FileMaker.",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Steve Winter",
+            "email": "steve@msdev.nz"
+        }
+    ],
+    "require": {
+        "php": "^8.4",
+        "doctrine/dbal": "^4.0",
+        "matatirosoln/sql-to-odata": "dev-main",
+        "phpmyadmin/sql-parser": "^5.0",
+        "guzzlehttp/guzzle": "^7.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Matatirosoln\\DoctrineOdataDriver\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Matatirosoln\\DoctrineOdataDriver\\Tests\\": "tests/"
+        }
+    },
+    "repositories": [
+        {
+            "type": "vcs",
+            "url": "git@github.com:matatirosolutions/sql-to-odata.git"
+        }
+    ],
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
