@@ -9,6 +9,10 @@ use Doctrine\DBAL\ParameterType;
 use Matatirosoln\DoctrineOdataDriver\Exception\ODataDriverException;
 use Matatirosoln\DoctrineOdataDriver\Http\ODataClient;
 use Matatirosoln\SqlToOdata\Exception\ConversionException;
+use Matatirosoln\SqlToOdata\Query\DeleteQuery;
+use Matatirosoln\SqlToOdata\Query\InsertQuery;
+use Matatirosoln\SqlToOdata\Query\SelectQuery;
+use Matatirosoln\SqlToOdata\Query\UpdateQuery;
 use Matatirosoln\SqlToOdata\SqlToOdata;
 
 class ODataStatement implements StatementInterface
@@ -32,14 +36,57 @@ class ODataStatement implements StatementInterface
         $sql = $this->substituteParams($this->sql);
 
         try {
-            $parsed = (new SqlToOdata())->parse($sql);
+            $query = new SqlToOdata()->parse($sql);
         } catch (ConversionException $e) {
             throw new ODataDriverException($e->getMessage(), 0, $e);
         }
 
-        $data = $this->client->get($parsed->entitySet, $parsed->queryString);
+        if ($query instanceof SelectQuery) {
+            return new ODataResult(
+                $this->client->get($query->entitySet, $query->queryString),
+            );
+        }
 
-        return new ODataResult($data);
+        if ($query instanceof InsertQuery) {
+            // OData has no bulk-insert endpoint; POST each row individually
+            // and collect the created records into a value array.
+            $created = array_map(
+                fn(array $row) => $this->client->post($query->entitySet, $row),
+                $query->rows,
+            );
+            return new ODataResult(['value' => $created]);
+        }
+
+        if ($query instanceof UpdateQuery) {
+            return new ODataResult(
+                $this->wrapSingle(
+                    $this->client->patch($query->entitySet, $query->filter, $query->body),
+                ),
+            );
+        }
+
+        if ($query instanceof DeleteQuery) {
+            $this->client->delete($query->entitySet, $query->filter);
+            return new ODataResult(['value' => []]);
+        }
+
+        throw new ODataDriverException("Unsupported query type: " . get_class($query));
+    }
+
+    /**
+     * Wraps a single-record response (no "value" key) into the standard
+     * {"value": [...]} envelope that ODataResult expects.
+     *
+     * @param array<string, mixed> $response
+     * @return array<string, mixed>
+     */
+    private function wrapSingle(array $response): array
+    {
+        if (array_key_exists('value', $response)) {
+            return $response;
+        }
+
+        return $response !== [] ? ['value' => [$response]] : ['value' => []];
     }
 
     private function substituteParams(string $sql): string
