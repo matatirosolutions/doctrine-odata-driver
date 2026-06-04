@@ -13,7 +13,7 @@
         "php": "^8.4",
         "doctrine/dbal": "^4.0",
         "matatirosoln/sql-to-odata": "dev-main",
-        "symfony/http-client": "^7.0",
+        "symfony/http-client": "^7.0|^8.0",
         "symfony/http-client-contracts": "^3.0"
     },
     "require-dev": {
