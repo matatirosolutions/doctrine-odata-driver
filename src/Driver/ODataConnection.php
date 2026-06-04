@@ -11,13 +11,24 @@ use Matatirosoln\DoctrineOdataDriver\Http\ODataClient;
 
 class ODataConnection implements ConnectionInterface
 {
-    public function __construct(private readonly ODataClient $client)
-    {
+    /**
+     * Cached metadata from the OData $metadata endpoint.
+     * Null until first accessed; fetched lazily and held for the lifetime
+     * of the connection (i.e. the request in a typical Symfony app).
+     *
+     * @var array<string, array{pk: string, properties: array<string, array{type: string, nullable: bool}>}>|null
+     */
+    private ?array $metadata = null;
+
+    public function __construct(
+        private readonly ODataClient $client,
+        private readonly bool $quoteGuids = false,
+    ) {
     }
 
     public function prepare(string $sql): StatementInterface
     {
-        return new ODataStatement($sql, $this->client);
+        return new ODataStatement($sql, $this->client, $this->quoteGuids, $this->getMetadata());
     }
 
     public function query(string $sql): ResultInterface
@@ -32,7 +43,7 @@ class ODataConnection implements ConnectionInterface
 
     public function exec(string $sql): int
     {
-        throw new ODataDriverException('exec() is not supported for read-only OData connections.');
+        throw new ODataDriverException('exec() is not supported for OData connections.');
     }
 
     public function lastInsertId(): int|string
@@ -42,17 +53,21 @@ class ODataConnection implements ConnectionInterface
 
     public function beginTransaction(): void
     {
-        throw new ODataDriverException('Transactions are not supported by OData.');
+        // OData has no transaction concept — each HTTP request is implicitly
+        // committed. Doctrine calls beginTransaction() / commit() around every
+        // flush(); we silently accept them so that normal UoW usage works.
     }
 
     public function commit(): void
     {
-        throw new ODataDriverException('Transactions are not supported by OData.');
+        // No-op: see beginTransaction().
     }
 
     public function rollBack(): void
     {
-        throw new ODataDriverException('Transactions are not supported by OData.');
+        // OData operations cannot be rolled back. Doctrine calls this on
+        // exception paths, so we swallow it rather than masking the original
+        // error with a secondary exception.
     }
 
     public function getServerVersion(): string
@@ -60,8 +75,31 @@ class ODataConnection implements ConnectionInterface
         return $this->client->getServerVersion();
     }
 
-    public function getNativeConnection(): ODataClient
+    /**
+     * Returns this connection instance as the "native" connection.
+     *
+     * The ODataSchemaManager accesses entity-set metadata via this method,
+     * which is the standard DBAL pattern for driver-level introspection.
+     */
+    public function getNativeConnection(): static
+    {
+        return $this;
+    }
+
+    /** Direct access to the HTTP client for callers that need it. */
+    public function getClient(): ODataClient
     {
         return $this->client;
+    }
+
+    /**
+     * Returns the parsed OData $metadata for all entity sets, fetching and
+     * caching it on first call.
+     *
+     * @return array<string, array{pk: string, properties: array<string, array{type: string, nullable: bool}>}>
+     */
+    public function getMetadata(): array
+    {
+        return $this->metadata ??= $this->client->fetchMetadata();
     }
 }

@@ -15,10 +15,19 @@ class ODataResult implements ResultInterface
     /** @var list<string> */
     private array $columns;
 
-    /** @param array<string, mixed> $odataResponse */
-    public function __construct(array $odataResponse)
+    /**
+     * @param array<string, mixed>                      $odataResponse
+     * @param list<array{field: string, alias: string}> $columns
+     *        Ordered column map from the SQL SELECT clause. When provided,
+     *        each row is reindexed so that:
+     *          - keys  = SQL aliases (e.g. "id_1", "Name_2") that Doctrine expects
+     *          - order = matches the SQL SELECT position for numeric/positional fetch
+     *        Missing OData fields are returned as null rather than causing errors.
+     *        When empty (SELECT *, aggregates, …) the raw OData fields are kept.
+     */
+    public function __construct(array $odataResponse, array $columns = [])
     {
-        $this->rows = array_map(
+        $rawRows = array_map(
             static fn(array $row) => array_filter(
                 $row,
                 static fn(string $key) => !str_starts_with($key, '@'),
@@ -26,6 +35,19 @@ class ODataResult implements ResultInterface
             ),
             $odataResponse['value'] ?? [],
         );
+
+        if (empty($columns)) {
+            $this->rows = $rawRows;
+        } else {
+            $this->rows = array_map(static function (array $row) use ($columns): array {
+                $mapped = [];
+                foreach ($columns as $col) {
+                    // Key = SQL alias Doctrine expects; value from the OData field name
+                    $mapped[$col['alias']] = $row[$col['field']] ?? null;
+                }
+                return $mapped;
+            }, $rawRows);
+        }
 
         $first = reset($this->rows);
         $this->columns = $first !== false ? array_keys($first) : [];

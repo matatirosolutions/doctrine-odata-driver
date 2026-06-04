@@ -8,7 +8,8 @@ The primary target backend is **FileMaker Server's OData API**, though the drive
 
 - PHP 8.4+
 - Doctrine DBAL 4.x
-- Symfony HttpClient 7.x
+- Doctrine ORM 3.x
+- Symfony HttpClient 7.x or 8.x
 
 ## Installation
 
@@ -22,16 +23,139 @@ composer require matatirosoln/doctrine-odata-driver
 > "repositories": [
 >     {
 >         "type": "vcs",
->         "url": "git@github.com:matatirosolutions/sql-to-odata.git"
+>         "url": "https://github.com/matatirosolutions/sql-to-odata.git"
 >     }
 > ]
 > ```
 
-## Usage
+## Symfony configuration
 
-### Connecting
+Add the driver to your `doctrine.yaml`:
 
-Pass `ODataDriver::class` as the `driverClass` in your DBAL connection parameters:
+```yaml
+doctrine:
+    dbal:
+        driver_class: Matatirosoln\DoctrineOdataDriver\Driver\ODataDriver
+        host: '%env(ODATA_HOST)%'
+        dbname: '%env(ODATA_DATABASE)%'
+        user: '%env(ODATA_USER)%'
+        password: '%env(ODATA_PASSWORD)%'
+        options:
+            ssl: true
+```
+
+Add the corresponding variables to your `.env`:
+
+```dotenv
+ODATA_HOST=your-odata-server.example.com
+ODATA_DATABASE=YourDatabaseName
+ODATA_USER=your-username
+ODATA_PASSWORD=your-password
+```
+
+### Connection options
+
+The following keys are supported under `options:` in `doctrine.yaml` (or as top-level keys when using `DriverManager::getConnection()` directly):
+
+| Option           | Default         | Description                                                                                                          |
+|------------------|-----------------|----------------------------------------------------------------------------------------------------------------------|
+| `ssl`            | `true`          | Use HTTPS and verify SSL certificates.                                                                               |
+| `port`           | `443`           | Server port.                                                                                                         |
+| `url_prefix`     | `/fmi/odata/v4` | URL path prefix before the database name. Change for non-FileMaker servers.                                          |
+| `quote_guids`    | `false`         | Keep UUID values as quoted strings in `$filter` expressions. Required for FileMaker; see below.                      |
+| `metadata_ttl`   | `0`             | TTL in seconds for the PSR-16 metadata cache. `0` means no expiry. Only used when `metadata_cache` is also set.     |
+| `metadata_cache` | `null`          | A `Psr\SimpleCache\CacheInterface` instance for caching `$metadata` across requests. Cannot be set via YAML; see below. |
+
+The base OData URL is constructed as `{scheme}://{host}:{port}/{url_prefix}/{dbname}`.
+
+## Metadata caching
+
+The driver fetches the OData `$metadata` endpoint once per `ODataConnection` instance (i.e. once per web request in a typical Symfony app) and caches the result in memory for the duration of that connection. This means every web request makes exactly one `$metadata` HTTP call before the first entity query.
+
+For long-running processes (queue workers, console commands) or high-traffic applications where even one `$metadata` call per request is too much, inject a PSR-16 `CacheInterface` to persist the parsed metadata across requests.
+
+Because `doctrine.yaml` only supports scalar values, the cache instance must be wired programmatically. The recommended approach in Symfony is a DBAL connection factory service:
+
+```php
+// src/Doctrine/ODataConnectionFactory.php
+namespace App\Doctrine;
+
+use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\DriverManager;
+use Matatirosoln\DoctrineOdataDriver\Driver\ODataDriver;
+use Psr\SimpleCache\CacheInterface;
+
+class ODataConnectionFactory
+{
+    public function __construct(private CacheInterface $cache) {}
+
+    public function createConnection(array $params): Connection
+    {
+        return DriverManager::getConnection(array_merge($params, [
+            'metadata_cache' => $this->cache,
+        ]));
+    }
+}
+```
+
+```yaml
+# config/services.yaml
+App\Doctrine\ODataConnectionFactory:
+    arguments:
+        - '@cache.app'   # or any PSR-16 adapter
+```
+
+> **Note:** Full turnkey cache integration will be provided by the upcoming `matatirosoln/doctrine-odata-filemaker-bundle`, which will wire the cache automatically via a Symfony compiler pass.
+
+## Primary key detection
+
+The driver automatically uses OData [key-path URLs](https://docs.oasis-open.org/odata/odata/v4.01/odata-v4.01-part2-url-conventions.html#sec_AddressingEntities) (`/EntitySet('key')`) for single-entity lookups — which is the correct OData v4 form — rather than `?$filter=pk eq value` (a collection filtered to one result).
+
+To do this it needs to know which field is the primary key for each entity set. This is discovered automatically at runtime by reflecting on your Doctrine entity classes: the driver reads the `#[ORM\Table(name: '...')]`, `#[ORM\Id]`, and `#[ORM\Column(name: '...')]` attributes directly, so **no additional configuration is required**. Results are cached per entity set for the lifetime of the process.
+
+For this to work, your entities must have an explicit table name and column name on the identifier:
+
+```php
+#[ORM\Entity]
+#[ORM\Table(name: 'Contact')]          // must match the OData entity set name
+class Contact
+{
+    #[ORM\Id]
+    #[ORM\Column(name: '__pk_ContactID')]  // must match the OData field name
+    public private(set) string $id { ... }
+}
+```
+
+## Standard usage with Doctrine ORM
+
+Once configured, use Doctrine ORM normally:
+
+```php
+// Find by primary key — generates /Contact('uuid')?$select=...
+$contact = $repository->find('08EC1E80-89DB-4513-8E3D-9D33D6BA006C');
+
+// Find by field — generates /Contact?$select=...&$filter=City eq 'Auckland'
+$contacts = $repository->findBy(['city' => 'Auckland']);
+
+// Persist a new entity
+$contact = new Contact('new-uuid');
+$contact->name = 'Jane';
+$contact->city = 'Christchurch';
+$entityManager->persist($contact);
+$entityManager->flush(); // → POST /Contact
+
+// Update
+$contact->city = 'Wellington';
+$entityManager->flush(); // → PATCH /Contact('uuid')
+
+// Delete
+$entityManager->remove($contact);
+$entityManager->flush(); // → DELETE /Contact('uuid')
+```
+
+## DBAL-only usage
+
+The driver can also be used directly via DBAL without the ORM:
 
 ```php
 use Doctrine\DBAL\DriverManager;
@@ -39,89 +163,46 @@ use Matatirosoln\DoctrineOdataDriver\Driver\ODataDriver;
 
 $connection = DriverManager::getConnection([
     'driverClass' => ODataDriver::class,
-    'host'        => 'your-filemaker-server.example.com',
-    'user'        => 'your-odata-username',
-    'password'    => 'your-odata-password',
+    'host'        => 'your-odata-server.example.com',
+    'user'        => 'username',
+    'password'    => 'password',
     'dbname'      => 'YourDatabase',
+    'quote_guids' => true,   // if connecting to FileMaker
 ]);
-```
 
-#### Connection parameters
-
-| Parameter    | Required | Default          | Description                                      |
-|--------------|----------|------------------|--------------------------------------------------|
-| `host`       | Yes      | —                | Hostname of the OData server                     |
-| `user`       | Yes      | —                | Username for HTTP Basic auth                     |
-| `password`   | Yes      | —                | Password for HTTP Basic auth                     |
-| `dbname`     | Yes      | —                | Database name (appears in the OData URL path)    |
-| `port`       | No       | `443`            | Server port                                      |
-| `url_prefix` | No       | `/fmi/odata/v4`  | URL path prefix before the database name         |
-| `ssl`        | No       | `true`           | Whether to use HTTPS and verify SSL certificates |
-
-The base OData URL is constructed as `{scheme}://{host}:{port}/{url_prefix}/{dbname}`.
-
-### Querying
-
-Use standard DBAL query methods — SQL is translated to OData requests automatically.
-
-```php
-// Fetch all rows
-$rows = $connection->fetchAllAssociative('SELECT * FROM Contact');
-
-// Filter with a WHERE clause
 $rows = $connection->fetchAllAssociative(
-    'SELECT Name, City FROM Contact WHERE City = ?',
+    "SELECT Name, City FROM Contact WHERE City = ?",
     ['Auckland'],
 );
-
-// Order and limit
-$rows = $connection->fetchAllAssociative(
-    'SELECT Name, City FROM Contact ORDER BY Name ASC LIMIT 10',
-);
 ```
-
-### Writing
-
-Full CRUD is supported. INSERT, UPDATE, and DELETE are translated to OData POST, PATCH, and DELETE requests respectively.
-
-```php
-// INSERT
-$connection->executeStatement(
-    'INSERT INTO Contact (Name, City) VALUES (?, ?)',
-    ['Jane', 'Christchurch'],
-);
-
-// UPDATE (WHERE clause is required)
-$connection->executeStatement(
-    'UPDATE Contact SET City = ? WHERE Name = ?',
-    ['Wellington', 'Jane'],
-);
-
-// DELETE (WHERE clause is required)
-$connection->executeStatement(
-    'DELETE FROM Contact WHERE Name = ?',
-    ['Jane'],
-);
-```
-
-> **Note:** UPDATE and DELETE without a WHERE clause will throw an exception. This is enforced to prevent accidental bulk modifications.
 
 ## FileMaker-specific notes
 
+### `quote_guids: true`
+
+By default the driver emits GUID values as bare `Edm.Guid` literals in `$filter` expressions, as required by the OData v4 specification:
+
+```
+$filter=pk eq 08EC1E80-89DB-4513-8E3D-9D33D6BA006C
+```
+
+FileMaker's OData parser cannot handle this — it interprets the leading hex segment as a number and fails. Setting `quote_guids: true` keeps GUIDs as quoted string literals:
+
+```
+$filter=pk eq '08EC1E80-89DB-4513-8E3D-9D33D6BA006C'
+```
+
+This option is only needed for FileMaker. Leave it unset (or `false`) for any OData v4 spec-compliant server.
+
+> **Note:** Single-entity primary-key lookups use the key-path URL form (`/Contact('uuid')`) and are not affected by this option — `quote_guids` only applies to GUIDs that appear in compound `$filter` expressions.
+
 ### Table occurrences, not layouts
 
-FileMaker OData exposes **table occurrences** from the relationship graph as entity sets — not layouts (which are used by the FileMaker Data API) and not raw base tables. The entity set name in your SQL must match the table occurrence name exactly.
-
-### Primary keys are UUIDs
-
-FileMaker generates UUID primary keys server-side. The `id` field is returned in `SELECT *` responses, but FileMaker does not currently support:
-
-- Using `id` in a `$select` clause (e.g. `SELECT id, Name FROM Contact` will fail)
-- Filtering by `id` using `$filter` (e.g. `WHERE id = '...'`)
+FileMaker OData exposes **table occurrences** from the relationship graph as entity sets — not layouts (which are used by the FileMaker Data API) and not raw base tables. The entity set name in your SQL and your `#[ORM\Table(name: '...')]` attribute must match the table occurrence name exactly.
 
 ### OData annotations are stripped
 
-FileMaker includes `@id` and `@editLink` metadata in every response row. These are automatically stripped before rows are returned to your application.
+FileMaker includes `@odata.id`, `@odata.editLink`, and similar metadata annotations in every response. These are automatically stripped before rows are returned to your application.
 
 ### Server setup
 
@@ -130,31 +211,36 @@ To use FileMaker OData you must:
 1. Enable OData in **FileMaker Server Admin Console → Connectors → OData**
 2. Ensure the connecting account's privilege set has the **`fmodata` extended privilege** enabled
 
-## Running tests
+## How SQL is translated to OData
 
-### Unit tests
+| SQL construct                          | OData equivalent                                      |
+|----------------------------------------|-------------------------------------------------------|
+| `SELECT *`                             | No `$select` (all fields returned)                    |
+| `SELECT a, b`                          | `?$select=a,b`                                        |
+| `WHERE field = value`                  | `?$filter=field eq value`                             |
+| `WHERE pk = 'uuid'` (single equality)  | `/EntitySet('uuid')` key-path (no `$filter`)          |
+| `ORDER BY col ASC`                     | `?$orderby=col asc`                                   |
+| `LIMIT n`                              | `?$top=n`                                             |
+| `LIMIT n OFFSET m`                     | `?$top=n&$skip=m`                                     |
+| `COUNT(*)`                             | `/$count`                                             |
+| `INSERT INTO …`                        | `POST /EntitySet`                                     |
+| `UPDATE … WHERE pk = 'uuid'`           | `PATCH /EntitySet('uuid')`                            |
+| `DELETE … WHERE pk = 'uuid'`           | `DELETE /EntitySet('uuid')`                           |
+
+SQL `UPDATE` and `DELETE` without a `WHERE` clause will throw an exception to prevent accidental bulk modifications.
+
+## Known limitations
+
+- **Joins** are not supported — OData has no equivalent of SQL JOIN. Model relationships using Doctrine associations rather than raw join queries.
+- **Transactions** are accepted as no-ops. OData operations are auto-committed per HTTP request; if multiple changes are flushed together and one fails, earlier changes cannot be rolled back.
+- **Subqueries** in `FROM`, `SELECT`, or `WHERE` are not supported.
+- **`SELECT DISTINCT`** is not supported.
+
+## Running tests
 
 ```bash
 ./vendor/bin/phpunit
 ```
-
-### Integration tests
-
-Integration tests run against a real OData server. Copy the example config and fill in your server details:
-
-```bash
-cp phpunit.integration.xml.example phpunit.integration.xml
-# edit phpunit.integration.xml with your server details
-./vendor/bin/phpunit -c phpunit.integration.xml
-```
-
-The integration tests expect a `Contact` entity set with `Name` (text) and `City` (text) fields, and at least the following seed records:
-
-| Name  | City         |
-|-------|--------------|
-| Alice | Auckland     |
-| Bob   | Wellington   |
-| Jane  | Christchurch |
 
 ## Licence
 

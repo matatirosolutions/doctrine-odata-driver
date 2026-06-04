@@ -43,6 +43,7 @@ class ODataPlatform extends AbstractPlatform
     protected function initializeDoctrineTypeMappings(): void
     {
         $this->doctrineTypeMapping = [
+            // Standard SQL type names
             'boolean'   => 'boolean',
             'integer'   => 'integer',
             'bigint'    => 'bigint',
@@ -55,6 +56,24 @@ class ODataPlatform extends AbstractPlatform
             'time'      => 'time',
             'datetime'  => 'datetime',
             'blob'      => 'blob',
+            'guid'      => 'guid',
+
+            // OData EDM primitive types — used when DBAL's type system resolves
+            // types from schema introspection via $metadata.
+            'Edm.String'         => 'string',
+            'Edm.Int16'          => 'smallint',
+            'Edm.Int32'          => 'integer',
+            'Edm.Int64'          => 'bigint',
+            'Edm.Decimal'        => 'decimal',
+            'Edm.Double'         => 'float',
+            'Edm.Single'         => 'float',
+            'Edm.Boolean'        => 'boolean',
+            'Edm.Date'           => 'date',
+            'Edm.DateTimeOffset' => 'datetime',
+            'Edm.TimeOfDay'      => 'time',
+            'Edm.Binary'         => 'blob',
+            'Edm.Stream'         => 'blob',
+            'Edm.Guid'           => 'guid',
         ];
     }
 
