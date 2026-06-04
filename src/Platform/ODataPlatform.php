@@ -9,12 +9,19 @@ use Doctrine\DBAL\Platforms\DateIntervalUnit;
 use Doctrine\DBAL\Platforms\Exception\NotSupported;
 use Doctrine\DBAL\Platforms\Keywords\KeywordList;
 use Doctrine\DBAL\Schema\AbstractSchemaManager;
+use Doctrine\DBAL\Schema\Name\UnquotedIdentifierFolding;
 use Doctrine\DBAL\Schema\TableDiff;
 use Doctrine\DBAL\TransactionIsolationLevel;
 use Matatirosoln\DoctrineOdataDriver\Schema\ODataSchemaManager;
 
 class ODataPlatform extends AbstractPlatform
 {
+    public function __construct()
+    {
+        // OData field names are case-sensitive — no identifier folding should be applied.
+        parent::__construct(UnquotedIdentifierFolding::NONE);
+    }
+
     public function getBooleanTypeDeclarationSQL(array $column): string
     {
         return 'BOOLEAN';
@@ -116,9 +123,16 @@ class ODataPlatform extends AbstractPlatform
         throw NotSupported::new(__METHOD__);
     }
 
+    /**
+     * Required by AbstractPlatform (abstract method).
+     *
+     * This method is marked @internal by DBAL and should only be called from
+     * within AbstractSchemaManager. ODataSchemaManager::listViews() returns []
+     * directly, so this method is never reached in practice.
+     */
     public function getListViewsSQL(string $database): string
     {
-        throw NotSupported::new(__METHOD__);
+        return 'SELECT NULL WHERE 1=0';
     }
 
     public function getSetTransactionIsolationSQL(TransactionIsolationLevel $level): string

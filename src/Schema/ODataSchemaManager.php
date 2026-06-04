@@ -81,6 +81,19 @@ class ODataSchemaManager extends AbstractSchemaManager
         return $columns;
     }
 
+    /**
+     * OData exposes entity sets, not views. Always returns empty.
+     *
+     * Overridden here rather than via the @internal getListViewsSQL() method
+     * on AbstractPlatform, which should not be extended by drivers.
+     *
+     * @return array<string, \Doctrine\DBAL\Schema\View>
+     */
+    public function listViews(): array
+    {
+        return [];
+    }
+
     // -------------------------------------------------------------------------
     // DDL write operations — not supported via OData
     //
