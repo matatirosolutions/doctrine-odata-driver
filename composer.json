@@ -13,7 +13,7 @@
         "php": "^8.4",
         "ext-dom": "*",
         "doctrine/dbal": "^4.0",
-        "matatirosoln/sql-to-odata": "dev-main",
+        "matatirosoln/sql-to-odata": "^0.0.1",
         "psr/simple-cache": "^3.0",
         "symfony/http-client": "^7.0|^8.0",
         "symfony/http-client-contracts": "^3.0"
@@ -31,12 +31,6 @@
             "Matatirosoln\\DoctrineOdataDriver\\Tests\\": "tests/"
         }
     },
-    "repositories": [
-        {
-            "type": "vcs",
-            "url": "git@github.com:matatirosolutions/sql-to-odata.git"
-        }
-    ],
     "minimum-stability": "dev",
     "prefer-stable": true
 }
