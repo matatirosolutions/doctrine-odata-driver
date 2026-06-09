@@ -12,10 +12,10 @@ use Symfony\Contracts\HttpClient\Exception\HttpExceptionInterface;
 use Symfony\Contracts\HttpClient\Exception\TransportExceptionInterface;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 
-readonly class ODataClient
+class ODataClient
 {
     private HttpClientInterface $http;
-    private string $baseUrl;
+    private readonly string $baseUrl;
 
     /**
      * @param string              $host
@@ -34,15 +34,15 @@ readonly class ODataClient
      *        Only used when $metadataCache is provided.
      */
     public function __construct(
-        string                  $host,
-        private string          $user,
-        private string          $password,
-        string                  $dbname,
-        int                     $port = 443,
-        string                  $urlPrefix = '/fmi/odata/v4',
-        bool                    $ssl = true,
-        private ?CacheInterface $metadataCache = null,
-        private int             $metadataTtl = 0,
+        string                         $host,
+        private readonly string        $user,
+        private readonly string        $password,
+        string                         $dbname,
+        int                            $port = 443,
+        string                         $urlPrefix = '/fmi/odata/v4',
+        bool                           $ssl = true,
+        private readonly ?CacheInterface $metadataCache = null,
+        private readonly int           $metadataTtl = 0,
     ) {
         $scheme        = $ssl ? 'https' : 'http';
         $this->baseUrl = rtrim("$scheme://$host:$port$urlPrefix/$dbname", '/');
@@ -115,6 +115,137 @@ readonly class ODataClient
     }
 
     /**
+     * Executes a named FileMaker script via the OData Script system table.
+     *
+     * URL form: POST /fmi/odata/v4/{database}/Script.{script-name}
+     *
+     * FileMaker constraints (enforced by the server, not this method):
+     *   - Script names must not contain @, &, or /
+     *   - Script names must not begin with a digit
+     *
+     * @param string|null $parameterJson
+     *        JSON-encoded parameter string (the value of "scriptParameterValue"),
+     *        or null to send an empty body (no parameter).
+     *
+     * @return array{scriptResult: array{code: int, resultParameter: string}}
+     * @throws ODataDriverException
+     */
+    public function runScript(string $scriptName, ?string $parameterJson): array
+    {
+        $url  = $this->baseUrl . '/Script.' . rawurlencode($scriptName);
+        $body = $parameterJson !== null ? ['scriptParameterValue' => $parameterJson] : null;
+
+        return $this->request('POST', $url, $body);
+    }
+
+    /**
+     * Fetches binary content from an arbitrary authenticated URL.
+     *
+     * Used to download container field data: FileMaker returns a URL for each
+     * container field in entity responses; this method retrieves the raw bytes
+     * using the same credentials as the main connection.
+     *
+     * @throws ODataDriverException
+     */
+    public function fetchUrl(string $url): string
+    {
+        try {
+            $response = $this->http->request('GET', $url, [
+                'auth_basic' => [$this->user, $this->password],
+            ]);
+            return $response->getContent();
+        } catch (TransportExceptionInterface $e) {
+            throw new ODataDriverException("Failed to fetch URL: {$e->getMessage()}", 0, $e);
+        } catch (HttpExceptionInterface $e) {
+            throw new ODataDriverException(
+                "Fetch returned HTTP " . $e->getResponse()->getStatusCode() . " for URL: $url",
+                $e->getResponse()->getStatusCode(),
+                $e,
+            );
+        }
+    }
+
+    /**
+     * Streams binary content from an authenticated URL into a writable resource.
+     *
+     * Prefer this over fetchUrl() for large container files — it writes chunks
+     * directly to the target resource without loading the entire file into memory.
+     *
+     * @param resource $target A writable PHP resource (e.g. from fopen(), tmpfile()).
+     *
+     * @throws ODataDriverException on HTTP or connectivity errors.
+     */
+    public function fetchUrlToStream(string $url, mixed $target): void
+    {
+        try {
+            $response = $this->http->request('GET', $url, [
+                'auth_basic' => [$this->user, $this->password],
+            ]);
+
+            foreach ($this->http->stream($response) as $chunk) {
+                if ($chunk->isFirst()) {
+                    $status = $response->getStatusCode();
+                    if ($status >= 400) {
+                        throw new ODataDriverException(
+                            "Stream returned HTTP {$status} for URL: {$url}",
+                            $status,
+                        );
+                    }
+                }
+
+                $data = $chunk->getContent();
+                if ($data !== '') {
+                    fwrite($target, $data);
+                }
+            }
+        } catch (ODataDriverException $e) {
+            throw $e;
+        } catch (TransportExceptionInterface $e) {
+            throw new ODataDriverException("Failed to stream URL: {$e->getMessage()}", 0, $e);
+        }
+    }
+
+    /**
+     * Uploads binary content to a container field on an existing record.
+     *
+     * URL form: PATCH /EntitySet('key')/FieldName
+     *
+     * @param KeyValue $keyValue  The entity's primary key (UUID or integer).
+     * @param string   $field     The container field name, e.g. 'Attachment'.
+     * @param string   $content   Raw binary content of the file to upload.
+     * @param string   $contentType MIME type, e.g. 'image/jpeg', 'application/pdf'.
+     *
+     * @throws ODataDriverException
+     */
+    public function patchBinary(
+        string   $entitySet,
+        KeyValue $keyValue,
+        string   $field,
+        string   $content,
+        string   $contentType,
+    ): void {
+        $url = $this->entityUrl($entitySet) . $keyValue->toUrlSegment() . '/' . rawurlencode($field);
+
+        try {
+            $response = $this->http->request('PATCH', $url, [
+                'auth_basic' => [$this->user, $this->password],
+                'headers'    => ['Content-Type' => $contentType],
+                'body'       => $content,
+            ]);
+            $response->getStatusCode(); // trigger response / surface HTTP errors
+        } catch (TransportExceptionInterface $e) {
+            throw new ODataDriverException("Container upload failed: {$e->getMessage()}", 0, $e);
+        } catch (HttpExceptionInterface $e) {
+            $status = $e->getResponse()->getStatusCode();
+            throw new ODataDriverException(
+                "Container upload returned HTTP $status for URL: $url",
+                $status,
+                $e,
+            );
+        }
+    }
+
+    /**
      * Fetches and parses the OData $metadata endpoint (EDMX XML).
      *
      * XML is used rather than CSDL JSON for maximum compatibility: XML is the
@@ -126,7 +257,10 @@ readonly class ODataClient
      * The cache key includes the full base URL so different OData endpoints
      * never share cached metadata.
      *
-     * @return array<string, array{pk: string, properties: array<string, array{type: string, nullable: bool}>}>
+     * @return array{
+     *   entities: array<string, array{pk: string, properties: array<string, array{type: string, nullable: bool}>}>,
+     *   valueLists: list<string>,
+     * }
      * @throws ODataDriverException
      */
     public function fetchMetadata(): array
@@ -162,7 +296,7 @@ readonly class ODataClient
             );
         }
 
-        $metadata = (new EdmxParser())->parse($xml);
+        $metadata = new EdmxParser()->parse($xml);
 
         if ($this->metadataCache !== null) {
             try {

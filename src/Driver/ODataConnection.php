@@ -16,9 +16,9 @@ class ODataConnection implements ConnectionInterface
      * Null until first accessed; fetched lazily and held for the lifetime
      * of the connection (i.e. the request in a typical Symfony app).
      *
-     * @var array<string, array{pk: string, properties: array<string, array{type: string, nullable: bool}>}>|null
+     * @var array{entities: array<string, array{pk: string, properties: array<string, array{type: string, nullable: bool}>>}, valueLists: list<string>}|null
      */
-    private ?array $metadata = null;
+    private ?array $parsedMetadata = null;
 
     public function __construct(
         private readonly ODataClient $client,
@@ -93,13 +93,39 @@ class ODataConnection implements ConnectionInterface
     }
 
     /**
-     * Returns the parsed OData $metadata for all entity sets, fetching and
-     * caching it on first call.
+     * Returns entity-set metadata for all entity sets, fetching and caching on
+     * first call. This is the interface used by ODataStatement and
+     * ODataSchemaManager — the return shape is unchanged from before the
+     * addition of value-list support.
      *
      * @return array<string, array{pk: string, properties: array<string, array{type: string, nullable: bool}>}>
      */
     public function getMetadata(): array
     {
-        return $this->metadata ??= $this->client->fetchMetadata();
+        return $this->parsed()['entities'];
+    }
+
+    /**
+     * Returns the names of all value lists defined in the FileMaker database,
+     * as discovered from the OData $metadata EnumType elements.
+     *
+     * This is names only — the actual entries for each list must be fetched
+     * via the FileMaker_ValueList_{name} entity-set endpoints (see ValueListService).
+     *
+     * @return list<string>
+     */
+    public function getValueLists(): array
+    {
+        return $this->parsed()['valueLists'];
+    }
+
+    /**
+     * Lazily fetches and caches the full parsed metadata from the OData server.
+     *
+     * @return array{entities: array<string, array{pk: string, properties: array<string, array{type: string, nullable: bool}>>}, valueLists: list<string>}
+     */
+    private function parsed(): array
+    {
+        return $this->parsedMetadata ??= $this->client->fetchMetadata();
     }
 }

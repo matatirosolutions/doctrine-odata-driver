@@ -23,21 +23,32 @@ class EdmxParser
     private const string EDM_NAMESPACE = 'http://docs.oasis-open.org/odata/ns/edm';
 
     /**
-     * Parses raw EDMX XML into a map of entity-set name → metadata.
+     * Parses raw EDMX XML into entity-set metadata and value lists.
      *
      * Returns:
      * [
-     *   'User' => [
-     *     'pk'         => '__pk_UserID',
-     *     'properties' => [
-     *       '__pk_UserID' => ['type' => 'Edm.String', 'nullable' => false],
-     *       'Name'        => ['type' => 'Edm.String', 'nullable' => true],
+     *   'entities' => [
+     *     'User' => [
+     *       'pk'         => '__pk_UserID',
+     *       'properties' => [
+     *         '__pk_UserID' => ['type' => 'Edm.String', 'nullable' => false],
+     *         'Name'        => ['type' => 'Edm.String', 'nullable' => true],
+     *       ],
      *     ],
+     *     ...
      *   ],
-     *   ...
+     *   'valueLists' => ['Status', 'Priority', ...],
      * ]
      *
-     * @return array<string, array{pk: string, properties: array<string, array{type: string, nullable: bool}>}>
+     * Value list names come from EnumType elements in $metadata. The actual
+     * entries for each list must be fetched separately via the
+     * FileMaker_ValueList_{name} entity-set endpoints — the Member values in
+     * $metadata are incomplete and reflect design-time schema only.
+     *
+     * @return array{
+     *   entities: array<string, array{pk: string, properties: array<string, array{type: string, nullable: bool}>}>,
+     *   valueLists: list<string>,
+     * }
      * @throws ODataDriverException
      */
     public function parse(string $xml): array
@@ -54,6 +65,17 @@ class EdmxParser
 
         $ns = self::EDM_NAMESPACE;
 
+        return [
+            'entities'   => $this->parseEntities($dom, $ns),
+            'valueLists' => $this->parseValueLists($dom, $ns),
+        ];
+    }
+
+    /**
+     * @return array<string, array{pk: string, properties: array<string, array{type: string, nullable: bool}>}>
+     */
+    private function parseEntities(\DOMDocument $dom, string $ns): array
+    {
         // Build a map of EntityType local name → [pk, properties]
         $entityTypes = [];
 
@@ -96,5 +118,29 @@ class EdmxParser
         }
 
         return $result;
+    }
+
+    /**
+     * Extracts the names of value lists from EnumType elements.
+     *
+     * FileMaker exposes value list names via EnumType elements in $metadata,
+     * but the Member values here are incomplete (they reflect the schema at
+     * design time, not the live data). The actual entries must be fetched
+     * separately via the FileMaker_ValueList_{name} entity-set endpoints.
+     *
+     * @return list<string>
+     */
+    private function parseValueLists(\DOMDocument $dom, string $ns): array
+    {
+        $names = [];
+
+        foreach ($dom->getElementsByTagNameNS($ns, 'EnumType') as $enumType) {
+            $name = $enumType->getAttribute('Name');
+            if ($name !== '') {
+                $names[] = $name;
+            }
+        }
+
+        return $names;
     }
 }
