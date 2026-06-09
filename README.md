@@ -17,17 +17,6 @@ The primary target backend is **FileMaker Server's OData API**, though the drive
 composer require matatirosoln/doctrine-odata-driver
 ```
 
-> **Note:** This package also requires [`matatirosoln/sql-to-odata`](https://github.com/matatirosolutions/sql-to-odata), which is not yet published to Packagist. Add the following to your `composer.json` before installing:
->
-> ```json
-> "repositories": [
->     {
->         "type": "vcs",
->         "url": "https://github.com/matatirosolutions/sql-to-odata.git"
->     }
-> ]
-> ```
-
 ## Symfony configuration
 
 Add the driver to your `doctrine.yaml`:
@@ -74,44 +63,30 @@ The driver fetches the OData `$metadata` endpoint once per `ODataConnection` ins
 
 For long-running processes (queue workers, console commands) or high-traffic applications where even one `$metadata` call per request is too much, inject a PSR-16 `CacheInterface` to persist the parsed metadata across requests.
 
-Because `doctrine.yaml` only supports scalar values, the cache instance must be wired programmatically. The recommended approach in Symfony is a DBAL connection factory service:
+Because `doctrine.yaml` only supports scalar values, the cache instance cannot be set there directly. The recommended approach in Symfony is to install [`matatirosoln/doctrine-odata-bundle`](https://github.com/matatirosolutions/doctrine-odata-bundle), which wires the cache automatically via a DBAL middleware — no factory or manual wiring required.
+
+If you need to wire the cache manually (e.g. outside Symfony, or without the bundle), pass the instance in the connection params:
 
 ```php
-// src/Doctrine/ODataConnectionFactory.php
-namespace App\Doctrine;
-
-use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
 use Matatirosoln\DoctrineOdataDriver\Driver\ODataDriver;
-use Psr\SimpleCache\CacheInterface;
 
-class ODataConnectionFactory
-{
-    public function __construct(private CacheInterface $cache) {}
-
-    public function createConnection(array $params): Connection
-    {
-        return DriverManager::getConnection(array_merge($params, [
-            'metadata_cache' => $this->cache,
-        ]));
-    }
-}
+$connection = DriverManager::getConnection([
+    'driverClass'    => ODataDriver::class,
+    'host'           => 'your-server.example.com',
+    'user'           => 'username',
+    'password'       => 'password',
+    'dbname'         => 'YourDatabase',
+    'metadata_cache' => $psr16CacheInstance,
+    'metadata_ttl'   => 3600,
+]);
 ```
-
-```yaml
-# config/services.yaml
-App\Doctrine\ODataConnectionFactory:
-    arguments:
-        - '@cache.app'   # or any PSR-16 adapter
-```
-
-> **Note:** Full turnkey cache integration will be provided by the upcoming `matatirosoln/doctrine-odata-filemaker-bundle`, which will wire the cache automatically via a Symfony compiler pass.
 
 ## Primary key detection
 
 The driver automatically uses OData [key-path URLs](https://docs.oasis-open.org/odata/odata/v4.01/odata-v4.01-part2-url-conventions.html#sec_AddressingEntities) (`/EntitySet('key')`) for single-entity lookups — which is the correct OData v4 form — rather than `?$filter=pk eq value` (a collection filtered to one result).
 
-To do this it needs to know which field is the primary key for each entity set. This is discovered automatically at runtime by reflecting on your Doctrine entity classes: the driver reads the `#[ORM\Table(name: '...')]`, `#[ORM\Id]`, and `#[ORM\Column(name: '...')]` attributes directly, so **no additional configuration is required**. Results are cached per entity set for the lifetime of the process.
+To do this it needs to know which field is the primary key for each entity set. This is discovered automatically at runtime from the OData `$metadata` EDMX response. When the driver first connects, it fetches `/$metadata` and parses it using `EdmxParser` to extract each entity set's primary key field name. That parsed result is held in `ODataConnection::$parsedMetadata` and accessed by each statement as needed — **no additional configuration is required**.
 
 For this to work, your entities must have an explicit table name and column name on the identifier:
 
@@ -245,3 +220,7 @@ SQL `UPDATE` and `DELETE` without a `WHERE` clause will throw an exception to pr
 ## Licence
 
 MIT
+
+## Contact
+
+Steve Winter — Matatiro Solutions Ltd — [steve@msdev.nz](mailto:steve@msdev.nz)
