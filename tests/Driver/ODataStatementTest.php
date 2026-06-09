@@ -116,7 +116,7 @@ class ODataStatementTest extends TestCase
         $this->client
             ->expects($this->once())
             ->method('patch')
-            ->with('Contact', "City eq 'Auckland'", ['City' => 'Wellington'])
+            ->with('Contact', ['City' => 'Wellington'], null, "City eq 'Auckland'")
             ->willReturn(['Name' => 'Alice', 'City' => 'Wellington']);
 
         (new ODataStatement(
@@ -153,7 +153,7 @@ class ODataStatementTest extends TestCase
         $this->client
             ->expects($this->once())
             ->method('delete')
-            ->with('Contact', "City eq 'Auckland'");
+            ->with('Contact', null, "City eq 'Auckland'");
 
         (new ODataStatement(
             "DELETE FROM Contact WHERE City = 'Auckland'",
