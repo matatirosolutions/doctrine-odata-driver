@@ -32,6 +32,10 @@ class ODataClient
      * @param int                 $metadataTtl
      *        TTL in seconds for the PSR-16 cache entry. 0 means no expiry.
      *        Only used when $metadataCache is provided.
+     * @param int                 $timeout
+     *        Default request timeout in seconds. Applied to every HTTP request
+     *        unless overridden at the call site (binary methods accept a
+     *        nullable $timeout parameter for per-request override).
      */
     public function __construct(
         string                         $host,
@@ -43,12 +47,13 @@ class ODataClient
         bool                           $ssl = true,
         private readonly ?CacheInterface $metadataCache = null,
         private readonly int           $metadataTtl = 0,
+        private readonly int           $timeout = 30,
     ) {
         $scheme        = $ssl ? 'https' : 'http';
         $this->baseUrl = rtrim("$scheme://$host:$port$urlPrefix/$dbname", '/');
 
         $this->http = HttpClient::create([
-            'timeout'     => 30,
+            'timeout'     => $this->timeout,
             'verify_peer' => $ssl,
             'verify_host' => $ssl,
         ]);
@@ -147,12 +152,14 @@ class ODataClient
      *
      * @throws ODataDriverException
      */
-    public function fetchUrl(string $url): string
+    public function fetchUrl(string $url, ?int $timeout = null): string
     {
         try {
-            $response = $this->http->request('GET', $url, [
-                'auth_basic' => [$this->user, $this->password],
-            ]);
+            $options = ['auth_basic' => [$this->user, $this->password]];
+            if ($timeout !== null) {
+                $options['timeout'] = $timeout;
+            }
+            $response = $this->http->request('GET', $url, $options);
             return $response->getContent();
         } catch (TransportExceptionInterface $e) {
             throw new ODataDriverException("Failed to fetch URL: {$e->getMessage()}", 0, $e);
@@ -175,12 +182,14 @@ class ODataClient
      *
      * @throws ODataDriverException on HTTP or connectivity errors.
      */
-    public function fetchUrlToStream(string $url, mixed $target): void
+    public function fetchUrlToStream(string $url, mixed $target, ?int $timeout = null): void
     {
         try {
-            $response = $this->http->request('GET', $url, [
-                'auth_basic' => [$this->user, $this->password],
-            ]);
+            $options = ['auth_basic' => [$this->user, $this->password]];
+            if ($timeout !== null) {
+                $options['timeout'] = $timeout;
+            }
+            $response = $this->http->request('GET', $url, $options);
 
             foreach ($this->http->stream($response) as $chunk) {
                 if ($chunk->isFirst()) {
@@ -223,15 +232,21 @@ class ODataClient
         string   $field,
         string   $content,
         string   $contentType,
+        ?int     $timeout = null,
     ): void {
         $url = $this->entityUrl($entitySet) . $keyValue->toUrlSegment() . '/' . rawurlencode($field);
 
+        $options = [
+            'auth_basic' => [$this->user, $this->password],
+            'headers'    => ['Content-Type' => $contentType],
+            'body'       => $content,
+        ];
+        if ($timeout !== null) {
+            $options['timeout'] = $timeout;
+        }
+
         try {
-            $response = $this->http->request('PATCH', $url, [
-                'auth_basic' => [$this->user, $this->password],
-                'headers'    => ['Content-Type' => $contentType],
-                'body'       => $content,
-            ]);
+            $response = $this->http->request('PATCH', $url, $options);
             $response->getStatusCode(); // trigger response / surface HTTP errors
         } catch (TransportExceptionInterface $e) {
             throw new ODataDriverException("Container upload failed: {$e->getMessage()}", 0, $e);

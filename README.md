@@ -50,6 +50,7 @@ The following keys are supported under `options:` in `doctrine.yaml` (or as top-
 |------------------|-----------------|----------------------------------------------------------------------------------------------------------------------|
 | `ssl`            | `true`          | Use HTTPS and verify SSL certificates.                                                                               |
 | `port`           | `443`           | Server port.                                                                                                         |
+| `timeout`        | `30`            | Default HTTP request timeout in seconds. Binary methods (container upload/download) accept a per-call override.      |
 | `url_prefix`     | `/fmi/odata/v4` | URL path prefix before the database name. Change for non-FileMaker servers.                                          |
 | `quote_guids`    | `false`         | Keep UUID values as quoted strings in `$filter` expressions. Required for FileMaker; see below.                      |
 | `metadata_ttl`   | `0`             | TTL in seconds for the PSR-16 metadata cache. `0` means no expiry. Only used when `metadata_cache` is also set.     |

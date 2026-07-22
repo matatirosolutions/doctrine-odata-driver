@@ -30,6 +30,7 @@ class ODataDriver implements DriverInterface
             ssl: (bool) ($parameters['ssl'] ?? true),
             metadataCache: $metadataCache instanceof CacheInterface ? $metadataCache : null,
             metadataTtl: (int) ($parameters['metadata_ttl'] ?? 0),
+            timeout: (int) ($parameters['timeout'] ?? 30),
         );
 
         return new ODataConnection($client, quoteGuids: (bool) ($parameters['quote_guids'] ?? false));
