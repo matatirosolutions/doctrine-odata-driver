@@ -102,6 +102,15 @@ class Contact
 }
 ```
 
+### How FileMaker determines the primary key
+
+FileMaker OData identifies a field as the primary key if it satisfies **both** of the following conditions:
+
+- The field does not allow empty values
+- The field requires a unique value (uniqueness validation is enabled)
+
+If no field meets these criteria, FileMaker falls back to the internal `ROWID` system field (equivalent to `Get(RecordID)`). The `ROWID` is a numeric record ID that is not stable across record deletion and recreation, and is not exposed as a regular application field. A table that relies on `ROWID` as its OData primary key will not work correctly with the driver — every single-entity lookup and write will fail. Ensure every table you expose via OData has an explicit primary key field with the correct field options set in FileMaker.
+
 ## Standard usage with Doctrine ORM
 
 Once configured, use Doctrine ORM normally:
