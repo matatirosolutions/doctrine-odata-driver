@@ -214,7 +214,9 @@ class ODataStatement implements StatementInterface
             ParameterType::NULL    => 'null',
             ParameterType::INTEGER => (string) (int) $value,
             ParameterType::BOOLEAN => $value ? 'true' : 'false',
-            default                => "'" . str_replace("'", "''", (string) $value) . "'",
+            default                => is_int($value) || is_float($value)
+                ? (string) $value
+                : "'" . str_replace("'", "''", (string) $value) . "'",
         };
     }
 }
